@@ -1,3 +1,7 @@
+/**
+ * @author gigatron
+ */
+
 require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
 const axios = require("axios");
