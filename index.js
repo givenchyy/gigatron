@@ -1,13 +1,22 @@
-/*
-@author gigatron
-*/
+/**
+ * @author gigatron
+ */
 
 require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
 const axios = require("axios");
 
+const connectDB = require("./database");
+const Order = require("./orderModel");
+const keepAlive = require("./keepAlive");
+
+module.exports = createAndSaveOrder;
+
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const adminId = process.env.ADMIN_ID;
+
+connectDB();
+keepAlive();
 
 // Set of busy times
 const busyTimes = new Set();
@@ -37,7 +46,7 @@ async function getChannelStats(channelIdentifier) {
     } else {
       chatResponse = await axios.get(
         `https://api.telegram.org/bot${process.env.BOT_TOKEN}/getChat`,
-        { params: { chat_id: `@${channelIdentifier}` } }
+        { params: { chat_id: `${channelIdentifier}` } }
       );
     }
 
@@ -67,7 +76,7 @@ async function getChannelStats(channelIdentifier) {
 async function sendPaymentLink(ctx, title, description, price, paymentLink) {
   try {
     const photoUrl =
-      "https://media.discordapp.net/attachments/1249077842042421371/1251188794414207139/photo_2024-04-03_23-40-37.jpg?ex=666efd5e&is=666dabde&hm=54f60933d9ed083e8ac4f27f20591c02c34c50798049d4d2dc19d4ea6b6a13bf&=&format=webp&width=798&height=411"; // Replace with your image URL
+      "https://media.discordapp.net/attachments/1253643242164195379/1253643318533951579/photo_2024-04-03_23-40-37.jpg?ex=667699d2&is=66754852&hm=d2516f06bfc2bdd3b728e6579e8afbcf9ba23a45f9e11f7e38f5111249380c24&=&format=webp&width=800&height=412"; // Replace with your image URL
 
     // Send message with image and "Pay" button
     await ctx.replyWithPhoto(
@@ -92,10 +101,10 @@ bot.start(async (ctx) => {
   await ctx.reply(`
 •ПРАЙС•
 
-12ч- 220 рублей 
+12ч- 220 рублей
 24ч- 300 рублей (+ реклама в историю бесплатно)
 
-закреп • подгон - 20 рублей 
+закреп • подгон - 20 рублей
 ~могу помочь с оформлением
 
 важно:
@@ -104,7 +113,7 @@ bot.start(async (ctx) => {
 
 по всем вопросам в личку @Vernitedengi_00
 << основной канал (https://t.me/vernitedengi_8) >>
-  `);
+`);
 
   await ctx.reply(
     "Пожалуйста, укажите название канала для получения аналитики:"
@@ -133,8 +142,12 @@ bot.on("text", async (ctx) => {
 
       if (stats.username) {
         statsMessage += `\nUsername: @${stats.username}`;
+        bot.context.currentOrder = { selectedChannel: stats.username }; // Сохраняем юзернейм канала
       } else {
         statsMessage += `\nКанал: https://t.me/${channelIdentifier}`;
+        bot.context.currentOrder = {
+          selectedChannel: `https://t.me/${channelIdentifier}`,
+        }; // Сохраняем ссылку на канал
       }
 
       const message = await ctx.reply("Выберите время, которое вам удобно:", {
@@ -230,10 +243,17 @@ bot.on("photo", async (ctx) => {
   const selectedTime = bot.context.selectedTime;
   const duration = bot.context.duration;
   const orderNumber = bot.context.orderNumber;
+  const channelIdentifier = bot.context.currentOrder.selectedChannel; // Получаем channelIdentifier из контекста бота
+
+  if (!channelIdentifier) {
+    // Проверяем, определен ли channelIdentifier
+    console.error("Не удалось найти выбранный канал для заказа.");
+    return;
+  }
 
   // Отправка фото администратору с кнопками Лайк/Дизлайк
   await ctx.telegram.sendPhoto(adminId, photoId, {
-    caption: `Подтвердите оплату за ${duration} в ${selectedTime} (номер заказа: ${orderNumber}):`,
+    caption: `Подтвердите оплату за ${duration} в ${selectedTime} для канала @${channelIdentifier} (номер заказа: ${orderNumber}):`,
     reply_markup: {
       inline_keyboard: [
         [
@@ -261,15 +281,64 @@ bot.on("photo", async (ctx) => {
   bot.context.orderNumber = null;
 });
 
+// Функция для создания и сохранения заказа в базе данных
+async function createAndSaveOrder(orderData) {
+  try {
+    // Проверка наличия selectedTime и преобразование в Date, если необходимо
+    if (!orderData.selectedTime) {
+      throw new Error("selectedTime is required.");
+    }
+
+    // Создание нового экземпляра заказа на основе переданных данных
+    const newOrder = new Order(orderData);
+
+    // Сохранение заказа в базе данных
+    const savedOrder = await newOrder.save();
+    return savedOrder;
+  } catch (error) {
+    throw new Error(`Ошибка при сохранении заказа: ${error.message}`);
+  }
+}
+
+module.exports = createAndSaveOrder;
+
 // Обработка лайка (подтверждение оплаты)
 bot.action(/^confirm_payment_.+/, async (ctx) => {
   const actionData = ctx.callbackQuery.data.split("_");
   const orderNumber = actionData[2];
 
-  const clientId = bot.context.clientId; // Получаем идентификатор клиента
+  // Получаем данные из контекста бота
+  const clientId = bot.context.clientId;
+  const username = ctx.callbackQuery.from.username;
+  const selectedTime = bot.context.selectedTime;
+  const duration = bot.context.duration;
 
-  // Логика подтверждения оплаты (обновление базы данных, уведомление клиента и т.д.)
+  const channelIdentifier = bot.context.currentOrder.selectedChannel; // Получаем channelIdentifier из контекста бота
+
+  // Создаем новый объект заказа для сохранения в базе данных
+  const orderData = {
+    orderNumber: orderNumber,
+    clientId: clientId,
+    username: `https://t.me/${username}`,
+    channel: `https://t.me/${channelIdentifier} `,
+    duration: duration === "24h" ? 24 : 12,
+    selectedTime: new Date(selectedTime),
+    title: "GIGATRON",
+    description:
+      duration === "24h"
+        ? "Размещение рекламы на 24 часа"
+        : "Размещение рекламы на 12 часов",
+    price: duration === "24h" ? 300 : 220,
+    paymentLink: "https://yoomoney.ru/to/4100117907658443",
+    paymentConfirmed: true,
+    channelMembersCount: 1000,
+  };
+
   try {
+    // Сохраняем заказ в базе данных с помощью функции createAndSaveOrder
+    const savedOrder = await createAndSaveOrder(orderData);
+
+    // Отправляем уведомление клиенту о подтверждении оплаты
     await ctx.telegram.sendMessage(
       clientId,
       `Оплата подтверждена (номер заказа: ${orderNumber}).`
@@ -277,14 +346,17 @@ bot.action(/^confirm_payment_.+/, async (ctx) => {
 
     await ctx.answerCbQuery("Оплата подтверждена");
 
-    // Удаление сообщения с кнопками администратора
+    // Удаляем сообщение с кнопками администратора
     await ctx.telegram.deleteMessage(
       adminId,
       ctx.callbackQuery.message.message_id
     );
   } catch (error) {
-    console.error("Ошибка при подтверждении оплаты:", error);
-    await ctx.answerCbQuery("Ошибка при подтверждении оплаты");
+    console.error(
+      "Ошибка при сохранении заказа или отправке уведомления:",
+      error
+    );
+    await ctx.answerCbQuery("Произошла ошибка. Попробуйте еще раз.");
   }
 });
 
