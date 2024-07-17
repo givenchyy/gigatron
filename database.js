@@ -1,20 +1,16 @@
 const mongoose = require("mongoose");
 require("dotenv").config(); // Подключение dotenv
 
-const connectDB = async () => {
+async function connectDB() {
   try {
-    const uri = process.env.MONGODB_URI; // Используем переменную окружения
-
-    await mongoose.connect(uri, {
+    await mongoose.connect(process.env.MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
-
-    console.log("Подключение к MongoDB установлено");
+    console.log("Подключение к базе данных успешно установлено.");
   } catch (error) {
-    console.error("Ошибка подключения к MongoDB:", error);
-    process.exit(1); // Выход из процесса при ошибке подключения
+    console.error("Ошибка подключения к базе данных:", error);
   }
-};
+}
 
 module.exports = connectDB;

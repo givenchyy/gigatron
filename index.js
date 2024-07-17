@@ -9,6 +9,7 @@ const axios = require("axios");
 const connectDB = require("./database");
 const Order = require("./orderModel");
 const keepAlive = require("./keepAlive");
+// const { schedulePost } = require("./scheduledPostsService");
 
 module.exports = createAndSaveOrder;
 
@@ -16,7 +17,6 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const adminId = process.env.ADMIN_ID;
 
 connectDB();
-keepAlive();
 
 // Set of busy times
 const busyTimes = new Set();
@@ -75,8 +75,7 @@ async function getChannelStats(channelIdentifier) {
 // Function to send payment link for advertising services
 async function sendPaymentLink(ctx, title, description, price, paymentLink) {
   try {
-    const photoUrl =
-      "https://media.discordapp.net/attachments/1253643242164195379/1253643318533951579/photo_2024-04-03_23-40-37.jpg?ex=667699d2&is=66754852&hm=d2516f06bfc2bdd3b728e6579e8afbcf9ba23a45f9e11f7e38f5111249380c24&=&format=webp&width=800&height=412"; // Replace with your image URL
+    const photoUrl = "http://localhost:6969/reklama.jpg"; // Replace with your image URL
 
     // Send message with image and "Pay" button
     await ctx.replyWithPhoto(
@@ -95,62 +94,104 @@ async function sendPaymentLink(ctx, title, description, price, paymentLink) {
     );
   }
 }
-
+async function sendMessageToChannel(message) {
+  try {
+    await bot.telegram.sendMessage(process.env.STATIC_CHANNEL_ID, message);
+  } catch (error) {
+    console.error("Ошибка при отправке сообщения в канал:", error);
+  }
+}
 // Bot launch
 bot.start(async (ctx) => {
   await ctx.reply(`
 •ПРАЙС•
 
-12ч- 220 рублей
-24ч- 300 рублей (+ реклама в историю бесплатно)
+12ч- 225 рублей
+24ч- 325 рублей (+ реклама в историю бесплатно)
 
-закреп • подгон - 20 рублей
 ~могу помочь с оформлением
 
 важно:
 
 ответственность за приход я не несу • всё зависит от вашего шаблона и канала !
 
-по всем вопросам в личку @Vernitedengi_00
-<< основной канал (https://t.me/vernitedengi_8) >>
+основной канал @vernitedengi_8
+сотрудничество @gigaproxyyy
+
 `);
 
   await ctx.reply(
-    "Пожалуйста, укажите название канала для получения аналитики:"
+    "Пожалуйста, укажите свой канал для дальнейшего подтверждения:"
   );
 
   bot.context.waitingForChannelName = true;
 });
 
+// const channelIdentifier = "@diehee";
+
+// bot.command("send", async (ctx) => {
+//   const postTime = new Date(Date.now() + 60 * 100); // Отправить через 1 минуту
+//   const message = "Привет, я Гигатрон";
+
+//   schedulePost(channelIdentifier, postTime, message);
+
+//   ctx.reply(
+//     `Сообщение "${message}" будет отправлено в канал ${channelIdentifier} в ${postTime}.`
+//   );
+// });
+
+async function checkBotPermissions(channelIdentifier) {
+  try {
+    if (!channelIdentifier.startsWith("@")) {
+      channelIdentifier = `@${channelIdentifier}`;
+    }
+    const chatMember = await bot.telegram.getChatMember(
+      channelIdentifier,
+      bot.telegram.botInfo.id
+    );
+    if (["administrator", "member"].includes(chatMember.status)) {
+      return true;
+    } else {
+      console.error(
+        "Бот не является участником канала или не имеет прав на отправку сообщений"
+      );
+      return false;
+    }
+  } catch (error) {
+    console.error("Ошибка при проверке прав бота на канале:", error);
+    return false;
+  }
+}
+
 // Text message handling
 bot.on("text", async (ctx) => {
   if (ctx.message.text && bot.context.waitingForChannelName) {
     const channelIdentifier = ctx.message.text.trim();
-
     bot.context.waitingForChannelName = false;
 
     const stats = await getChannelStats(channelIdentifier);
 
     if (stats.error) {
       await ctx.reply(stats.error);
-    } else if (stats.membersCount < 600) {
+    } else if (stats.membersCount < 1) {
       await ctx.reply(
-        "Ваш канал не подходит под параметры (меньше 600 подписчиков). Пожалуйста, вернитесь позже."
+        "Ваш канал не подходит под параметры (меньше 100 подписчиков). Пожалуйста, вернитесь позже."
       );
     } else {
-      let statsMessage = `Канал: ${stats.title}\nКоличество подписчиков: ${stats.membersCount}`;
-
+      // Логирование информации о канале
+      console.log(`Канал: ${stats.title}`);
+      console.log(`Количество подписчиков: ${stats.membersCount}`);
       if (stats.username) {
-        statsMessage += `\nUsername: @${stats.username}`;
-        bot.context.currentOrder = { selectedChannel: stats.username }; // Сохраняем юзернейм канала
+        console.log(`Username: @${stats.username}`);
+        bot.context.currentOrder = { selectedChannel: `@${stats.username}` }; // Сохраняем юзернейм канала
       } else {
-        statsMessage += `\nКанал: https://t.me/${channelIdentifier}`;
+        console.log(`Канал: https://t.me/${channelIdentifier}`);
         bot.context.currentOrder = {
           selectedChannel: `https://t.me/${channelIdentifier}`,
         }; // Сохраняем ссылку на канал
       }
 
-      const message = await ctx.reply("Выберите время, которое вам удобно:", {
+      await ctx.reply("Выберите время, которое вам удобно:", {
         reply_markup: {
           inline_keyboard: [
             [
@@ -161,8 +202,30 @@ bot.on("text", async (ctx) => {
           ],
         },
       });
+    }
+  } else if (ctx.message.text && bot.context.waitingForPostTemplate) {
+    const postTemplate = ctx.message.text.trim();
 
-      bot.context.messageId = message.message_id;
+    bot.context.waitingForPostTemplate = false;
+    bot.context.postTemplate = postTemplate;
+
+    // Логика планирования отправки поста на канал
+    const selectedTime = bot.context.selectedTime; // Получаем выбранное время
+
+    const postTime = new Date(selectedTime); // Создаём объект времени для планирования
+    postTime.setSeconds(0, 0); // Устанавливаем секунды и миллисекунды в 0 для точности
+
+    // Используем setTimeout для планирования отправки сообщения на канал
+    const delay = postTime - Date.now(); // Вычисляем время до отправки сообщения
+
+    if (delay > 0) {
+      setTimeout(async () => {
+        await sendMessageToChannel(postTemplate); // Отправляем сохраненный шаблон поста
+        await ctx.reply("Пост успешно отправлен на канал.");
+      }, delay);
+    } else {
+      await sendMessageToChannel(postTemplate); // Если время прошло, отправляем сразу
+      await ctx.reply("Пост успешно отправлен на канал.");
     }
   }
 });
@@ -239,46 +302,69 @@ bot.action(/^duration_.+/, async (ctx) => {
 
 // Обработка фото (доказательства оплаты)
 bot.on("photo", async (ctx) => {
-  const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id; // Получаем ID последнего отправленного фото
-  const selectedTime = bot.context.selectedTime;
-  const duration = bot.context.duration;
-  const orderNumber = bot.context.orderNumber;
-  const channelIdentifier = bot.context.currentOrder.selectedChannel; // Получаем channelIdentifier из контекста бота
+  if (bot.context.waitingForPostTemplate) {
+    const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
 
-  if (!channelIdentifier) {
-    // Проверяем, определен ли channelIdentifier
-    console.error("Не удалось найти выбранный канал для заказа.");
-    return;
-  }
+    bot.context.waitingForPostTemplate = false;
 
-  // Отправка фото администратору с кнопками Лайк/Дизлайк
-  await ctx.telegram.sendPhoto(adminId, photoId, {
-    caption: `Подтвердите оплату за ${duration} в ${selectedTime} для канала @${channelIdentifier} (номер заказа: ${orderNumber}):`,
-    reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: "👍🏻",
-            callback_data: `confirm_payment_${orderNumber}`,
-          },
-          {
-            text: "👎🏻",
-            callback_data: `reject_payment_${orderNumber}`,
-          },
+    await ctx.reply("Шаблон поста успешно получен. Начинаем планирование.");
+
+    // Логика планирования отправки поста на канал
+    const selectedTime = bot.context.selectedTime; // Получаем выбранное время
+    const selectedChannel = bot.context.currentOrder.selectedChannel; // Получаем выбранный канал
+
+    const postTime = new Date(selectedTime); // Создаём объект времени для планирования
+    postTime.setSeconds(0, 0); // Устанавливаем секунды и миллисекунды в 0 для точности
+
+    // Используем setTimeout для планирования отправки сообщения на канал
+    setTimeout(async () => {
+      await sendMessageToChannel(selectedChannel, postTemplate);
+      await ctx.reply("Пост успешно отправлен на канал.");
+    }, postTime - Date.now());
+  } else {
+    const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id; // Получаем ID последнего отправленного фото
+    const selectedTime = bot.context.selectedTime;
+    const duration = bot.context.duration;
+    const orderNumber = bot.context.orderNumber;
+    const channelIdentifier = bot.context.currentOrder?.selectedChannel; // Получаем channelIdentifier из контекста бота
+
+    if (!channelIdentifier) {
+      console.error("Не удалось найти выбранный канал для заказа.");
+      await ctx.reply(
+        "Произошла ошибка: не удалось найти выбранный канал для заказа. Пожалуйста, попробуйте снова."
+      );
+      return;
+    }
+
+    // Отправка фото администратору с кнопками Лайк/Дизлайк
+    await ctx.telegram.sendPhoto(adminId, photoId, {
+      caption: `Подтвердите оплату за ${duration} в ${selectedTime} для канала ${channelIdentifier} (номер заказа: ${orderNumber}):`,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "👍🏻",
+              callback_data: `confirm_payment_${orderNumber}`,
+            },
+            {
+              text: "👎🏻",
+              callback_data: `reject_payment_${orderNumber}`,
+            },
+          ],
         ],
-      ],
-    },
-  });
+      },
+    });
 
-  // Уведомление клиента о том, что доказательство оплаты отправлено администратору
-  await ctx.reply(
-    `Ваше доказательство оплаты успешно отправлено администратору. Ожидайте подтверждения (номер заказа: ${orderNumber}).`
-  );
+    // Уведомление клиента о том, что доказательство оплаты отправлено администратору
+    await ctx.reply(
+      `Ваше доказательство оплаты успешно отправлено администратору. Ожидайте подтверждения (номер заказа: ${orderNumber}).`
+    );
 
-  // Очистка контекста
-  bot.context.selectedTime = null;
-  bot.context.duration = null;
-  bot.context.orderNumber = null;
+    // Очистка контекста
+    bot.context.selectedTime = null;
+    bot.context.duration = null;
+    bot.context.orderNumber = null;
+  }
 });
 
 // Функция для создания и сохранения заказа в базе данных
@@ -302,6 +388,25 @@ async function createAndSaveOrder(orderData) {
 
 module.exports = createAndSaveOrder;
 
+async function requestPostTemplate(ctx) {
+  try {
+    const clientId = bot.context.clientId;
+
+    await bot.telegram.sendMessage(
+      clientId,
+      "Пожалуйста, отправьте шаблон поста, который вы хотите разместить."
+    );
+
+    // Устанавливаем флаг ожидания шаблона поста
+    bot.context.waitingForPostTemplate = true;
+  } catch (error) {
+    console.error("Ошибка при отправке сообщения клиенту:", error);
+    await ctx.reply(
+      "Произошла ошибка при отправке сообщения. Пожалуйста, попробуйте снова."
+    );
+  }
+}
+
 // Обработка лайка (подтверждение оплаты)
 bot.action(/^confirm_payment_.+/, async (ctx) => {
   const actionData = ctx.callbackQuery.data.split("_");
@@ -313,14 +418,22 @@ bot.action(/^confirm_payment_.+/, async (ctx) => {
   const selectedTime = bot.context.selectedTime;
   const duration = bot.context.duration;
 
-  const channelIdentifier = bot.context.currentOrder.selectedChannel; // Получаем channelIdentifier из контекста бота
+  const channelIdentifier = bot.context.currentOrder?.selectedChannel; // Получаем channelIdentifier из контекста бота
+
+  if (!channelIdentifier) {
+    console.error("Не удалось найти выбранный канал для заказа.");
+    await ctx.reply(
+      "Произошла ошибка: не удалось найти выбранный канал для заказа. Пожалуйста, попробуйте снова."
+    );
+    return;
+  }
 
   // Создаем новый объект заказа для сохранения в базе данных
   const orderData = {
     orderNumber: orderNumber,
     clientId: clientId,
     username: `https://t.me/${username}`,
-    channel: `https://t.me/${channelIdentifier} `,
+    selectedChannel: channelIdentifier,
     duration: duration === "24h" ? 24 : 12,
     selectedTime: new Date(selectedTime),
     title: "GIGATRON",
@@ -346,17 +459,59 @@ bot.action(/^confirm_payment_.+/, async (ctx) => {
 
     await ctx.answerCbQuery("Оплата подтверждена");
 
-    // Удаляем сообщение с кнопками администратора
-    await ctx.telegram.deleteMessage(
-      adminId,
-      ctx.callbackQuery.message.message_id
-    );
+    // Обновляем сообщение администратора с кнопками
+    await ctx.editMessageReplyMarkup({
+      inline_keyboard: [
+        [
+          {
+            text: "Утверждено ✅",
+            callback_data: `confirm_success_${orderNumber}`,
+          },
+        ],
+      ],
+    });
+
+    // Запрос шаблона поста у клиента
+    await requestPostTemplate(ctx);
   } catch (error) {
     console.error(
       "Ошибка при сохранении заказа или отправке уведомления:",
       error
     );
     await ctx.answerCbQuery("Произошла ошибка. Попробуйте еще раз.");
+  }
+});
+
+// Обработка дизлайка (отказ в оплате)
+bot.action(/^reject_payment_.+/, async (ctx) => {
+  const actionData = ctx.callbackQuery.data.split("_");
+  const orderNumber = actionData[2];
+
+  const clientId = bot.context.clientId; // Получаем идентификатор клиента
+
+  // Логика отказа в оплате (уведомление клиента и т.д.)
+  try {
+    await ctx.telegram.sendMessage(
+      clientId,
+      `Оплата отклонена (номер заказа: ${orderNumber}). Пожалуйста, свяжитесь с администратором для уточнения деталей https://t.me/givencchyy.`
+    );
+
+    await ctx.answerCbQuery("Оплата отклонена");
+
+    // Обновляем сообщение администратора с кнопками
+    await ctx.editMessageReplyMarkup({
+      inline_keyboard: [
+        [
+          {
+            text: "Не утверждено ❌",
+            callback_data: `reject_failed_${orderNumber}`,
+          },
+        ],
+      ],
+    });
+  } catch (error) {
+    console.error("Ошибка при отказе в оплате:", error);
+    await ctx.answerCbQuery("Ошибка при отказе в оплате");
   }
 });
 
@@ -396,3 +551,22 @@ bot
   .catch((error) => {
     console.error("Не удалось запустить бота:", error);
   });
+
+const express = require("express");
+const path = require("path");
+
+const server = express();
+const PORT = process.env.PORT || 3000;
+
+// Обслуживание изображений из папки 'img'
+server.use(express.static(path.join(__dirname, "img")));
+
+server.get("/", (req, res) => {
+  res.send("I'm alive");
+});
+
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+keepAlive();
